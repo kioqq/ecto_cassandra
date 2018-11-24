@@ -186,8 +186,8 @@ defmodule EctoCassandra.Adapter do
       queue_time: queue_time,
       result: log_result(result),
       params: Map.get(query, :values, []),
-      query: String.Chars.to_string(cql),
-      ansi_color: cql_color(cql),
+      query: String.Chars.to_string(cql)
+      #ansi_color: cql_color(cql),
     })
   end
 
