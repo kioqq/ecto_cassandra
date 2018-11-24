@@ -8,6 +8,8 @@ defmodule EctoCassandra.Storage do
 
   @spec storage_up(Keyword.t()) :: :ok | {:error, any}
   def storage_up(options) when is_list(options) do
+    IO.inspect(options, label: "storage_up")
+
     keyspace = Keyword.fetch!(options, :keyspace)
     command = "CREATE KEYSPACE #{keyspace} WITH REPLICATION = #{configure_replication(options)};"
 
@@ -31,6 +33,8 @@ defmodule EctoCassandra.Storage do
   end
 
   defp configure_replication(options) do
+    IO.inspect(options, label: "configure_replication")
+
     [class: class, replication_factor: replication_factor] =
       Keyword.merge(@default_replication_opts, Keyword.get(options, :replication))
 
