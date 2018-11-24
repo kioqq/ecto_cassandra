@@ -1,56 +1,44 @@
-defmodule EctoCassandra.MixProject do
+defmodule EctoCassandra.Mixfile do
   use Mix.Project
 
-  def project do
-    [
-      app: :ecto_cassandra,
-      version: "0.1.0",
-      elixir: "~> 1.7",
-      start_permanent: Mix.env() == :prod,
-      deps: deps(),
-      dialyzer: dialyzer(),
-      test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.post": :test,
-        "coveralls.html": :test
-      ]
-    ]
-  end
+  def project, do: [
+    app: :ecto_cassandra,
+    version: "1.0.2",
+    elixir: "~> 1.4",
+    build_embedded: Mix.env == :prod,
+    start_permanent: Mix.env == :prod,
+    test_coverage: [tool: ExCoveralls],
+    preferred_cli_env: [
+      "coveralls": :test,
+      "coveralls.detail": :test,
+      "coveralls.post": :test,
+      "coveralls.html": :test,
+      "coveralls.travis": :test,
+    ],
+    source_url: "https://github.com/cafebazaar/ecto-cassandra",
+    description: "Cassandra Adapter for Ecto",
+    package: package(),
+    deps: deps(),
+  ]
 
-  # Run "mix help compile.app" to learn about applications.
-  def application do
-    [
-      extra_applications: [:logger]
-    ]
-  end
+  def application, do: [
+    applications: [:logger, :cassandra],
+  ]
 
-  # Run "mix help deps" to learn about dependencies.
-  defp deps do
-    [
-      {:credo, "~> 1.0", only: ~w(dev test)a},
-      {:db_connection, "~> 2.0", override: true},
-      {:dialyxir, "~> 1.0.0-rc.3", only: ~w(dev test)a, runtime: false},
-      {:ecto, "~> 3.0"},
-      {:ecto_sql, "~> 3.0"},
-      {:ex_doc, "~> 0.14", only: :dev},
-      {:ex_machina, "~> 2.2", only: :test},
-      {:excoveralls, "~> 0.8", only: :test},
-      {:faker, "~> 0.10", only: :test},
-      {:mix_test_watch, "~> 0.7", only: :dev, runtime: false},
-      {:mox, "~> 0.4", only: :test},
-      {:xandra, github: "lexhide/xandra"},
-      {:uuid, "~> 1.1"}
-    ]
-  end
+  defp deps, do: [
+    {:ecto, "~> 2.1.0"},
+    {:cassandra, "~> 1.0.2"},
+    {:excoveralls, "~> 0.6", only: :test},
+    {:ex_doc, "~> 0.18.0", only: :dev},
+    {:lz4, github: "szktty/erlang-lz4", override: true}, # TODO check if fixed remove
+  ]
 
-  # Dialyzer's configuration
-  defp dialyzer do
-    [
-      flags: ~w(unmatched_returns error_handling race_conditions underspecs unknown)a,
-      ignore_warnings: "config/dialyzer.ignore-warnings",
-      plt_add_apps: ~w(mix ex_unit)a
-    ]
-  end
+  defp package, do: [
+    licenses: ["Apache 2.0"],
+    maintainers: ["Ali Rajabi", "Hassan Zamani"],
+    links: %{
+      "Github" => "https://github.com/cafebazaar/ecto-cassandra",
+    },
+    files: ~w(mix.exs lib README.md LICENSE.md),
+  ]
 end

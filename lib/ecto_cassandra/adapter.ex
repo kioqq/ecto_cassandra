@@ -1,125 +1,203 @@
 defmodule EctoCassandra.Adapter do
   @moduledoc """
-  Ecto 2.x adapter for the Cassandra database
+  Ecto Adapter for Apache Cassandra.
+
+  It uses `cassandra` for communicating to the database
   """
+
+  use EctoCassandra.Adapter.Base
 
   @behaviour Ecto.Adapter
-  @adapter EctoCassandra.Planner
-  @storage_adapter EctoCassandra.Storage
-  @migration_adapter EctoCassandra.Migration
-  @structure_adapter EctoCassandra.Structure
-
-  alias Xandra.Batch
-
-  @doc false
-  defmacro __before_compile__(_env), do: :ok
-
-  @doc false
-  defdelegate checkout(adapter_meta, options, function), to: @adapter
-
-  @doc false
-  defdelegate init(config), to: @adapter
-
-  @doc false
-  defdelegate ensure_all_started(repo, type), to: @adapter
-
-  @doc false
-  defdelegate prepare(operation, query), to: @adapter
-
-  @doc false
-  defdelegate execute(repo, query_meta, query_cache, sources, preprocess, opts),
-    to: @adapter
-
-  @doc false
-  defdelegate insert(repo, query_meta, sources, on_conflict, returning, opts),
-    to: @adapter
-
-  @doc false
-  defdelegate insert_all(repo, query_meta, header, rows, on_conflict, returning, opts),
-    to: @adapter
-
-  @doc false
-  defdelegate update(repo, query_meta, params, filter, autogen, opts), to: @adapter
-
-  @doc false
-  defdelegate delete(repo, query_meta, filter, opts), to: @adapter
-
-  @doc false
-  @spec transaction(any, any, any) :: nil
-  def transaction(_repo, _opts, _fun), do: nil
-
-  @doc false
-  @spec in_transaction?(any) :: false
-  def in_transaction?(_repo), do: false
-
-  @doc false
-  @spec rollback(any, any) :: nil
-  def rollback(_repo, _tid), do: nil
-
-  @doc """
-  Cassandra batches
-
-  Accepts list of statements and running these queries in a batch.
-  Returns `{:ok, Xandra.Void.t}` or `{:error, any}`
-
-  Example:
-
-  ```
-  EctoCassandra.Adapter.batch([%User{} |> User.changeset(attrs) |> Repo.insert(execute: false),
-    %User{} |> User.changeset(another_attrs) |> Repo.insert(execute: false)
-  ])
-  ```
-  """
-  @spec batch([String.t()]) :: {:ok, Xandra.Void.t()} | {:error, any}
-  def batch(queries) do
-    batch =
-      Enum.reduce(queries, Batch.new(:logged), fn q, acc ->
-        apply(Batch, :add, [acc] ++ [q])
-      end)
-
-    Xandra.execute(EctoCassandra.Conn, batch)
-  end
-
-  @doc false
-  defdelegate autogenerate(type), to: @adapter
-
-  @doc false
-  defdelegate loaders(primitive, type), to: @adapter
-
-  @doc false
-  defdelegate dumpers(primitive, type), to: @adapter
-
+  @behaviour Ecto.Adapter.Migration
   @behaviour Ecto.Adapter.Storage
 
-  @doc false
-  defdelegate storage_down(opts), to: @storage_adapter
+  @host_tries 3
+
+  ### Ecto.Adapter.Migration Callbacks ###
 
   @doc false
-  defdelegate storage_up(opts), to: @storage_adapter
+  def execute_ddl(repo, definitions, options) do
+    options = Keyword.put(options, :on_coordinator, true)
+    cql = EctoCassandra.ddl(definitions)
 
-  @behaviour Ecto.Adapter.Migration
-
-  @doc false
-  defdelegate execute_ddl(repo, command, options), to: @migration_adapter
+    case exec_and_log(repo, cql, options) do
+      %CQL.Result.SchemaChange{} -> :ok
+      %CQL.Result.Void{}         -> :ok
+      error                      -> raise error
+    end
+  end
 
   @doc false
   def supports_ddl_transaction?, do: false
 
-  @doc false
-  @spec lock_for_migrations(
-          Ecto.Adapter.adapter_meta(),
-          Ecto.Query.t(),
-          options :: Keyword.t(),
-          fun
-        ) :: no_return
-  def lock_for_migrations(_adapter_meta, _arg1, _options, _fun),
-    do: raise(RuntimeError, "Can't lock the migrations tables")
-
-  @behaviour Ecto.Adapter.Structure
+  ### Ecto.Adapter.Storage Callbacks ###
 
   @doc false
-  defdelegate structure_dump(default, config), to: @structure_adapter
+  def storage_up(options) do
+    options = Keyword.put(options, :on_coordinator, true)
+
+    cql =
+      options
+      |> Keyword.put(:if_not_exists, true)
+      |> EctoCassandra.create_keyspace
+
+    case run_query(cql, options) do
+      %CQL.Result.SchemaChange{change_type: "CREATED", target: "KEYSPACE"} ->
+        :ok
+      %CQL.Result.Void{} ->
+        {:error, :already_up}
+      error ->
+        {:error, Exception.message(error)}
+    end
+  end
 
   @doc false
-  defdelegate structure_load(default, config), to: @structure_adapter
+  def storage_down(options) do
+    options = Keyword.put(options, :on_coordinator, true)
+
+    cql =
+      options
+      |> Keyword.put(:if_exists, true)
+      |> EctoCassandra.drop_keyspace
+
+    case run_query(cql, options) do
+      %CQL.Result.SchemaChange{change_type: "DROPPED", target: "KEYSPACE"} ->
+        :ok
+      %CQL.Result.Void{} ->
+        {:error, :already_down}
+      error ->
+        {:error, Exception.message(error)}
+    end
+  end
+
+  ### Ecto.Adapter Callbacks ###
+
+  @doc false
+  defmacro __before_compile__(_env) do
+    quote do
+      defmodule CassandraRepo do
+        use Cassandra
+      end
+
+      defdelegate execute(statement, options), to: CassandraRepo
+
+      def __cassandra_repo__, do: CassandraRepo
+    end
+  end
+
+  @doc false
+  def child_spec(repo, options) do
+    import Supervisor.Spec
+    supervisor(repo.__cassandra_repo__, [options])
+  end
+
+  @doc false
+  def ensure_all_started(_repo, _type) do
+    Application.ensure_all_started(:cassandra)
+  end
+
+  @doc false
+  def execute(repo, %{fields: fields} = meta, query, params, process, options) do
+    [cql, options] = super(repo, meta, query, params, process, options)
+
+    case exec_and_log(repo, cql, options) do
+      %CQL.Result.Rows{rows_count: count, rows: rows} ->
+        {count, Enum.map(rows, &process_row(&1, fields, process))}
+      %CQL.Result.Void{} -> :ok
+      error              -> raise error
+    end
+  end
+
+  @doc false
+  def insert(repo, meta, fields, on_conflict, autogenerate, options) do
+    args = super(repo, meta, fields, on_conflict, autogenerate, options)
+    apply(&exec/4, args)
+  end
+
+  @doc false
+  def insert_all(repo, meta, header, list, on_conflict, returning, options) do
+    args = super(repo, meta, header, list, on_conflict, returning, options)
+    apply(&exec/4, args)
+  end
+
+  @doc false
+  def update(repo, meta, fields, filters, returning, options) do
+    args = super(repo, meta, fields, filters, returning, options)
+    apply(&exec/3, args)
+  end
+
+  @doc false
+  def delete(repo, meta, filters, options) do
+    args = super(repo, meta, filters, options)
+    apply(&exec/3, args)
+  end
+
+  ### Helpers ###
+
+  defp run_query(cql, options) do
+    options
+    |> Keyword.get(:contact_points, [])
+    |> List.duplicate(@host_tries)
+    |> List.flatten
+    |> Stream.map(&Cassandra.Connection.run_query(&1, cql, options))
+    |> Stream.reject(&match?(%Cassandra.ConnectionError{}, &1))
+    |> Enum.take(1)
+    |> case do
+      [result] -> result
+      []       -> raise RuntimeError, "connections refused"
+    end
+  end
+
+  defp exec(repo, cql, options, on_conflict \\ :error) do
+    case exec_and_log(repo, cql, options) do
+      %CQL.Result.Void{} ->
+        {:ok, []}
+      %CQL.Result.Rows{rows_count: 1, rows: [[false | _]], columns: ["[applied]"|_]} ->
+        if on_conflict == :nothing do
+          {:ok, []}
+        else
+          {:error, :stale}
+        end
+      %CQL.Result.Rows{} ->
+        {:ok, []}
+      error -> raise error
+    end
+  end
+
+  defp exec_and_log(repo, cql, options) do
+    if Keyword.get(options, :log, true) do
+      repo.execute(cql, Keyword.put(options, :log, &log(repo, cql, &1)))
+    else
+      repo.execute(cql, Keyword.delete(options, :log))
+    end
+  end
+
+  defp log(repo, cql, entry) do
+    %{connection_time: query_time,
+      decode_time: decode_time,
+      pool_time: queue_time,
+      result: result,
+      query: query,
+    } = entry
+
+    repo.__log__(%Ecto.LogEntry{
+      query_time: query_time,
+      decode_time: decode_time,
+      queue_time: queue_time,
+      result: log_result(result),
+      params: Map.get(query, :values, []),
+      query: String.Chars.to_string(cql),
+      ansi_color: cql_color(cql),
+    })
+  end
+
+  defp log_result({:ok, _query, res}), do: {:ok, res}
+  defp log_result(other), do: other
+
+  defp cql_color("SELECT" <> _), do: :cyan
+  defp cql_color("INSERT" <> _), do: :green
+  defp cql_color("UPDATE" <> _), do: :yellow
+  defp cql_color("DELETE" <> _), do: :red
+  defp cql_color("TRUNC" <> _), do: :red
+  defp cql_color(_), do: nil
 end

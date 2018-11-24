@@ -1,0 +1,19 @@
+language: elixir
+sudo: true
+services:
+  - cassandra
+elixir:
+  - 1.4
+  - 1.5
+otp_release:
+  - 19.3
+  - 20.0
+addons:
+  apt:
+    packages:
+      - build-essential
+git:
+  depth: 1
+env:
+  - MIX_ENV=test
+script: mix coveralls.travis
