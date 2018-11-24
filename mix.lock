@@ -31,5 +31,5 @@
   "telemetry": {:hex, :telemetry, "0.2.0", "5b40caa3efe4deb30fb12d7cd8ed4f556f6d6bd15c374c2366772161311ce377", [:mix], [], "hexpm"},
   "unicode_util_compat": {:hex, :unicode_util_compat, "0.4.1", "d869e4c68901dd9531385bb0c8c40444ebf624e60b6962d95952775cac5e90cd", [:rebar3], [], "hexpm"},
   "uuid": {:hex, :uuid, "1.1.8", "e22fc04499de0de3ed1116b770c7737779f226ceefa0badb3592e64d5cfb4eb9", [:mix], [], "hexpm"},
-  "xandra": {:hex, :xandra, "0.10.0", "fbb4d70b4088d8dfd22752891a640d5c72c4dcc381f09c05f12757307769bbdf", [:mix], [{:db_connection, "~> 1.0", [hex: :db_connection, repo: "hexpm", optional: false]}], "hexpm"},
+  "xandra": {:git, "https://github.com/lexhide/xandra.git", "6f15e93a0d645d1c5f7bba3db7aeadb09361d890", []},
 }
